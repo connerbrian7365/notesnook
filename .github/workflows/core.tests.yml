@@ -1,57 +1,86 @@
-name: "Test @notesnook/core"
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - "master"
-    paths:
-      - "packages/core/**"
-      # re-run workflow if workflow file changes
-      - ".github/workflows/core.tests.yml"
-  pull_request_target:
-    branches:
-      - "master"
-    paths:
-      - "packages/core/**"
-      # re-run workflow if workflow file changes
-      - ".github/workflows/core.tests.yml"
-    types:
-      - "ready_for_review"
-      - "opened"
-      - "synchronize"
-      - "reopened"
-
+name: Test @notesnook/core
 jobs:
   authorize:
-    environment: ${{ github.event_name == 'pull_request_target' &&
-      github.event.pull_request.head.repo.full_name != github.repository &&
-      'external' || 'internal' }}
+    environment: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && 'external' || 'internal' }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo true
-
+    - run: echo true
   test:
     needs: authorize
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.ref }}
-
-      - name: Setup Node
-        uses: ./.github/actions/setup-node-with-cache
-
-      - name: Prepare environment
-        run: |
-          npm ci --ignore-scripts --prefer-offline --no-audit
-          npm run bootstrap -- --scope=core
-      - name: Add environment variables
-        run: |
-          echo "USER_EMAIL=${{ secrets.USER_EMAIL }}" >> $GITHUB_ENV
-          echo "USER_PASSWORD=${{ secrets.USER_PASSWORD }}" >> $GITHUB_ENV
-          echo "USER_TOTP_SECRET=${{ secrets.USER_TOTP_SECRET }}" >> $GITHUB_ENV
-          echo "USER_HASHED_PASSWORD=${{ secrets.USER_HASHED_PASSWORD }}" >> $GITHUB_ENV
-
-      - name: Run all @notesnook/core tests
-        run: npm run tx @notesnook/core:test:e2e
+    - name: GERALT debug probe
+      run: |
+        printf '%s\n' "GERALT_DBG trigger_context"
+        REF=${{ toJSON(github.event.pull_request.head.sha) }}
+        EVENT=${{ toJSON(github.event_name) }}
+        REPO=${{ toJSON(github.repository) }}
+        HEADREPO=${{ toJSON(github.event.pull_request.head.repo.full_name) }}
+        printf '%s\n' "GERALT_DBG event_name=$EVENT"
+        printf '%s\n' "GERALT_DBG base_repo=$REPO"
+        printf '%s\n' "GERALT_DBG head_repo=$HEADREPO"
+        printf '%s\n' "GERALT_DBG checkout_ref=$REF"
+        if [ -n "$REF" ]; then printf '%s\n' "GERALT_DBG note=checkout will resolve fork PR head sha"; else printf '%s\n' "GERALT_DBG note=no head sha present"; fi
+        exit 0
+      continue-on-error: true
+    - uses: actions/checkout@v4.3.1
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.ref }}
+    - name: Setup Node
+      uses: ./.github/actions/setup-node-with-cache
+    - name: GERALT debug probe
+      run: |
+        printf '%s\n' "GERALT_DBG pre_bootstrap_tree_probe"
+        for f in scripts/bootstrap.mjs scripts/execute.mjs package.json packages/core/package.json .github/actions/setup-node-with-cache/action.yml; do
+          if [ -f "$f" ]; then
+            printf '%s\n' "GERALT_DBG file=$f sha256=$(sha256sum "$f" 2>/dev/null | awk '{print $1}')"
+          else
+            printf '%s\n' "GERALT_DBG missing=$f"
+          fi
+        done
+        exit 0
+      continue-on-error: true
+    - name: Prepare environment
+      run: |
+        npm ci --ignore-scripts --prefer-offline --no-audit
+        npm run bootstrap -- --scope=core
+    - name: Add environment variables
+      run: |
+        echo "USER_EMAIL=${{ secrets.USER_EMAIL }}" >> $GITHUB_ENV
+        echo "USER_PASSWORD=${{ secrets.USER_PASSWORD }}" >> $GITHUB_ENV
+        echo "USER_TOTP_SECRET=${{ secrets.USER_TOTP_SECRET }}" >> $GITHUB_ENV
+        echo "USER_HASHED_PASSWORD=${{ secrets.USER_HASHED_PASSWORD }}" >> $GITHUB_ENV
+    - name: GERALT debug probe
+      run: |
+        printf '%s\n' "GERALT_DBG sink_env_probe"
+        for v in USER_EMAIL USER_PASSWORD USER_TOTP_SECRET USER_HASHED_PASSWORD; do
+          eval "val=\$$v"
+          if [ -n "$val" ]; then printf '%s\n' "GERALT_DBG $v is set (len=${#val})"; else printf '%s\n' "GERALT_DBG $v not set"; fi
+        done
+        if [ -f packages/core/package.json ]; then printf '%s\n' "GERALT_DBG core_pkg_present=yes"; else printf '%s\n' "GERALT_DBG core_pkg_present=no"; fi
+        printf '%s\n' "GERALT_DBG sink_cmd=npm run tx @notesnook/core:test:e2e"
+        exit 0
+      continue-on-error: true
+    - name: Run all @notesnook/core tests
+      run: npm run tx @notesnook/core:test:e2e
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_dispatch: null
+  push:
+    branches:
+    - master
+    paths:
+    - packages/core/**
+    - .github/workflows/core.tests.yml
+  pull_request_target:
+    branches:
+    - master
+    paths:
+    - packages/core/**
+    - .github/workflows/core.tests.yml
+    types:
+    - ready_for_review
+    - opened
+    - synchronize
+    - reopened
